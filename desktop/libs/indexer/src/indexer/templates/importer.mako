@@ -20,7 +20,7 @@
   from desktop import conf
   from desktop.views import commonheader, commonfooter, commonshare, commonimportexport, _ko
 
-  from indexer.conf import ENABLE_NEW_INDEXER
+  from indexer.conf import ENABLE_NEW_INDEXER, ENABLE_SQOOP
 %>
 
 <%namespace name="actionbar" file="actionbar.mako" />
@@ -382,6 +382,14 @@ ${ assist.assistPanel() }
               <select id="sourceType" data-bind="selectize: createWizard.source.inputFormats, value: createWizard.source.inputFormat, optionsText: 'name', optionsValue: 'value'"></select>
             </label>
           </div>
+          <div class="control-group" data-bind="visible: createWizard.source.inputFormat() == 'rdbms'">
+            <div><label class="radio inline-block">
+              <input type="radio" name='createWizard.source.dbMode' value='customRdbms' data-bind="checked:'dbModeFunc'" /> ${_('Custom Database')}
+            </label></div>
+            <div><label class="radio inline-block">
+              <input type="radio" name='createWizard.source.dbMode' value='configRdbms' data-bind="checked:'dbModeFunc'" /> ${_('Configured Database')}
+            </label></div>
+          </div>
 
           <div class="control-group" data-bind="visible: createWizard.prefill.target_type() == 'database'">
             <label for="sourceType" class="control-label">${ _('No source is needed for creating a database.') }</label>
@@ -396,6 +404,24 @@ ${ assist.assistPanel() }
                 <i class="fa fa-external-link-square"></i>
               </a>
             <!-- /ko -->
+          </div>
+
+          <div class="control-group" data-bind="visible: createWizard.source.dbMode() == 'configRdbms'">
+            <label for="rdbmsType" class="control-label"><div>${ _('Database') }</div>
+              <select id="rdbmsType" data-bind="selectize: createWizard.source.rdbmsTypes, value: createWizard.source.rdbmsType, optionsText: 'name', optionsValue: 'value'"></select>
+            </label>
+          </div>
+
+          <div class="control-group input-append" data-bind="visible: createWizard.source.dbMode() == 'configRdbms'">
+            <label for="rdbmsDatabaseName" class="control-label"><div>${ _('Database Name') }</div>
+              <select id="rdbmsDatabaseName" data-bind="selectize: createWizard.source.rdbmsDatabaseNames, value: createWizard.source.rdbmsDatabaseName, optionsText: 'name', optionsValue: 'value'"></select>
+            </label>
+          </div>
+
+          <div class="control-group input-append" data-bind="visible: createWizard.source.dbMode() == 'configRdbms'">
+            <label for="rdbmsTableName" class="control-label"><div>${ _('Table') }</div>
+              <select id="rdbmsTableName" data-bind="selectize: createWizard.source.rdbmsTableNames, value: createWizard.source.rdbmsTableName, optionsText: 'name', optionsValue: 'value'"></select>
+            </label>
           </div>
 
           <div class="control-group" data-bind="visible: createWizard.source.inputFormat() == 'table'">
@@ -414,7 +440,7 @@ ${ assist.assistPanel() }
     </div>
 
     <!-- ko if: createWizard.source.show() && createWizard.source.inputFormat() != 'manual' -->
-    <div class="card step">
+    <div class="card step" data-bind="visible: createWizard.source.inputFormat() == 'file'">
       <!-- ko if: createWizard.isGuessingFormat -->
       <h3 class="card-heading simple">${_('Guessing format...')} <i class="fa fa-spinner fa-spin"></i></h3>
       <!-- /ko -->
@@ -488,7 +514,7 @@ ${ assist.assistPanel() }
           <div class="control-group">
             <label for="collectionName" class="control-label "><div>${ _('Name') }</div></label>
             <!-- ko if: outputFormat() != 'table' && outputFormat() != 'database' -->
-              <input type="text" class="form-control input-xlarge" id="collectionName" data-bind="value: name, valueUpdate: 'afterkeydown'" placeholder="${ _('Name') }">
+              <input type="text" class="form-control name input-xlarge" id="collectionName" data-bind="value: name, filechooser: name, filechooserOptions: { linkMarkup: true, skipInitialPathIfEmpty: true, openOnFocus: true, selectFolder: true, uploadFile: false, uploadFolder: true}" placeholder="${ _('Name') }">
             <!-- /ko -->
 
             <!-- ko if: outputFormat() == 'table' || outputFormat() == 'database' -->
@@ -1154,11 +1180,13 @@ ${ assist.assistPanel() }
       self.inputFormatsAll = ko.observableArray([
           {'value': 'file', 'name': 'File'},
           {'value': 'manual', 'name': 'Manually'},
+          % if ENABLE_SQOOP.get():
+          {'value': 'rdbms', 'name': 'External Database'},
+          % endif
           % if ENABLE_NEW_INDEXER.get():
           {'value': 'query', 'name': 'SQL Query'},
           {'value': 'table', 'name': 'Table'},
           % endif
-          ##{'value': 'dbms', 'name': 'DBMS'},
           ##{'value': 'text', 'name': 'Paste Text'},
       ]);
       self.inputFormatsManual = ko.observableArray([
@@ -1186,6 +1214,41 @@ ${ assist.assistPanel() }
       });
       self.isObjectStore.subscribe(function(newVal) {
         vm.createWizard.destination.useDefaultLocation(! newVal);
+      });
+
+      // Rdbms
+      self.rdbmsType = ko.observable('mysql');
+      self.rdbmsType.subscribe(function(val) {
+        self.path('');
+        resizeElements();
+      });
+      self.rdbmsTypesAll = ko.observableArray([
+          {'value': 'mysql', 'name': 'Mysql'},
+          {'value': 'oracle', 'name': 'Oracle'},
+          {'value': 'postgresql', 'name': 'PostgreSQL'},
+          {'value': 'db2', 'name': 'DB2},
+      ]);
+      self.rdbmsTypes = ko.pureComputed(function() {
+        return self.rdbmsTypesAll();
+      });
+      self.dbMode = ko.observable(true);
+      self.dbModeFunc = ko.observable("dbConfig");
+      self.rdbmsDatabaseName = ko.observable('');
+      self.rdbmsDatabaseNamesAll = ko.observableArray([
+          //not sure how to populate the list using the function call get_databases from rdbms_indexer.py.
+          //while creating the object, user can be 'hue' and database type (eg. Mysql) will come from self.rdbmsType.
+      ]);
+      self.rdbmsDatabaseNames = ko.pureComputed(function() {
+        return self.rdbmsDatabaseNamesAll();
+      });
+      self.rdbmsTableName = ko.observable('');
+      self.rdbmsTableNamesAll = ko.observableArray([
+          //not sure how to populate the list using the function call get_tables from rdbms_indexer.py.
+          //while creating the object, user can be 'hue' and
+          //database type and database name will come from self.rdbmsType and self.rdbmsDatabaseName respectively.
+      ]);
+      self.rdbmsTableNames = ko.pureComputed(function() {
+        return self.rdbmsTableNamesAll();
       });
 
       // Table
@@ -1232,6 +1295,8 @@ ${ assist.assistPanel() }
           return self.query();
         } else if (self.inputFormat() == 'manual') {
           return true;
+        }  else if (self.inputFormat() == 'rdbms') {
+          return self.rdbmsName().length > 0 && self.rdbmsTable().length > 0;
         }
       });
 
@@ -1340,9 +1405,16 @@ ${ assist.assistPanel() }
           if (format.value == 'database' && wizard.source.inputFormat() != 'manual') {
             return false;
           }
-          else if (format.value == 'file' && wizard.source.inputFormat() != 'manual') {
+          if (format.value == 'file' && wizard.source.inputFormat() == 'manual') {
             return false;
           }
+          else if (format.value == 'file' && wizard.source.inputFormat() == 'file') {
+            return false;
+          }
+          else if (format.value == 'table' && wizard.source.inputFormat() == 'rdbms') {
+            return false;
+          }
+
           return true;
         })
       });
@@ -1517,7 +1589,7 @@ ${ assist.assistPanel() }
          return self.destination.name().length > 0 && (['table', 'database'].indexOf(self.destination.outputFormat()) == -1 || /^([a-zA-Z0-9_]+\.)?[a-zA-Z0-9_]+$/.test(self.destination.name()));
       });
       self.readyToIndex = ko.computed(function () {
-        var validFields = self.destination.columns().length || self.destination.outputFormat() == 'database';
+        var validFields = self.destination.columns().length || self.destination.outputFormat() == 'database' || self.destination.outputFormat() == 'file';
         var validTableColumns = self.destination.outputFormat() != 'table' || ($.grep(self.destination.columns(), function(column) {
             return column.name().length == 0;
           }).length == 0
@@ -1525,7 +1597,7 @@ ${ assist.assistPanel() }
             return column.name().length == 0 || (self.source.inputFormat() != 'manual' && column.partitionValue().length == 0);
           }).length == 0
         );
-        var isTargetAlreadyExisting = ! self.destination.isTargetExisting() || self.destination.outputFormat() == 'index';
+        var isTargetAlreadyExisting = ! self.destination.isTargetExisting() || self.destination.outputFormat() == 'index' || self.destination.outputFormat() == 'file';
         var isValidTable = self.destination.outputFormat() != 'table' || (
           self.destination.tableFormat() != 'kudu' || (self.destination.kuduPartitionColumns().length > 0 &&
               $.grep(self.destination.kuduPartitionColumns(), function(partition) { return partition.columns().length > 0 }).length == self.destination.kuduPartitionColumns().length && self.destination.primaryKeys().length > 0)
@@ -1650,6 +1722,12 @@ ${ assist.assistPanel() }
                   sqlDialect: true
                 },
                 impala: {
+                  placeHolder: '${ _("Example: SELECT * FROM tablename, or press CTRL + space") }',
+                  aceMode: 'ace/mode/impala',
+                  snippetImage: '${ static("impala/art/icon_impala_48.png") }',
+                  sqlDialect: true
+                },
+                sqoop1: {
                   placeHolder: '${ _("Example: SELECT * FROM tablename, or press CTRL + space") }',
                   aceMode: 'ace/mode/impala',
                   snippetImage: '${ static("impala/art/icon_impala_48.png") }',

@@ -25,7 +25,11 @@ from desktop.lib import django_mako
 from desktop.lib.django_util import JsonResponse
 from desktop.lib.exceptions_renderable import PopupException
 from desktop.models import Document2
+from hadoop import conf
+from librdbms.server import dbms as rdbms
+from librdbms.conf import DATABASES, get_database_password
 from notebook.connectors.base import get_api, Notebook
+from notebook.connectors.rdbms import Assist
 from notebook.decorators import api_error_handler
 from notebook.models import make_notebook
 
@@ -96,6 +100,8 @@ def guess_format(request):
       raise PopupException('Hive table format %s is not supported.' % table_metadata.details['properties']['format'])
   elif file_format['inputFormat'] == 'query':
     format_ = {"quoteChar": "\"", "recordSeparator": "\\n", "type": "csv", "hasHeader": False, "fieldSeparator": "\u0001"}
+  elif file_format['inputFormat'] == 'rdbms':
+    format_ = {"type": "csv"}
 
   format_['status'] = 0
   return JsonResponse(format_)
@@ -142,6 +148,20 @@ def guess_field_types(request):
             for col in sample.meta
         ]
     }
+  elif file_format['inputFormat'] == 'rdbms':
+    query_server = rdbms.get_query_server_config(server=file_format['rdbmsName'])
+    db = rdbms.get(request.user, query_server=query_server)
+    assist = Assist(db)
+    sample = assist.get_sample_data(database=file_format['rdbmsDatabaseName'], table=file_format['rdbmsTableName'])
+    table_metadata = db.get_columns(file_format['rdbmsDatabaseName'], file_format['rdbmsTableName'], names_only=False)
+
+    format_ = {
+        "sample": list(sample.rows()),
+        "columns": [
+            Field(col['name'], HiveFormat.FIELD_TYPE_TRANSLATE.get(col['type'], 'string')).to_dict()
+            for col in table_metadata
+        ]
+    }
 
   return JsonResponse(format_)
 
@@ -170,9 +190,11 @@ def importer_submit(request):
     job_handle = _index(request, source, collection_name)
   elif destination['ouputFormat'] == 'database':
     job_handle = create_database(request, source, destination, start_time)
+  elif destination['outputFormat'] == 'file' and source['inputFormat'] == 'rdbms':
+    job_handle = run_sqoop(request, source, destination, start_time)
   else:
     job_handle = _create_table(request, source, destination, start_time)
-
+  print JsonResponse(job_handle)
   return JsonResponse(job_handle)
 
 
@@ -391,16 +413,16 @@ def _create_table_from_a_file(request, source, destination, start_time=-1):
 def _index(request, file_format, collection_name, query=None):
   indexer = Indexer(request.user, request.fs)
 
-  unique_field = indexer.get_unique_field(file_format)
-  is_unique_generated = indexer.is_unique_generated(file_format)
+  #unique_field = indexer.get_unique_field(file_format)
+  #is_unique_generated = indexer.is_unique_generated(file_format)
 
-  schema_fields = indexer.get_kept_field_list(file_format['columns'])
-  if is_unique_generated:
-    schema_fields += [{"name": unique_field, "type": "string"}]
+  #schema_fields = indexer.get_kept_field_list(file_format['columns'])
+  #if is_unique_generated:
+  #  schema_fields += [{"name": unique_field, "type": "string"}]
 
-  collection_manager = CollectionManagerController(request.user)
-  if not collection_manager.collection_exists(collection_name):
-    collection_manager.create_collection(collection_name, schema_fields, unique_key_field=unique_field)
+  #collection_manager = CollectionManagerController(request.user)
+  #if not collection_manager.collection_exists(collection_name):
+  #  collection_manager.create_collection(collection_name, schema_fields, unique_key_field=unique_field)
 
   if file_format['inputFormat'] == 'table':
     db = dbms.get(request.user)
@@ -415,6 +437,43 @@ def _index(request, file_format, collection_name, query=None):
   else:
     input_path = None
 
-  morphline = indexer.generate_morphline_config(collection_name, file_format, unique_field)
+  morphline = indexer.generate_morphline_config(collection_name, file_format, None) #unique_field)
 
-  return indexer.run_morphline(request, collection_name, morphline, input_path, query)
+  return run_morphline(request, collection_name, morphline, input_path, query)
+
+
+def run_sqoop(request, source, destination, start_time):
+  rdbmsName = source['rdbmsName']
+  rdbmsHost = DATABASES[rdbmsName].HOST.get()
+  rdbmsPort = DATABASES[rdbmsName].PORT.get()
+  rdbmsDatabaseName = source['rdbmsDatabaseName']
+  rdbmsTableName = source['rdbmsTableName']
+  rdbmsUserName = DATABASES[rdbmsName].USER.get()
+  rdbmsPassword = get_database_password(rdbmsName)
+  targetDir = conf.HDFS_CLUSTERS['default'].FS_DEFAULTFS.get()+destination['name']
+  print rdbmsName
+  print rdbmsHost
+  print rdbmsPort
+  print rdbmsDatabaseName
+  print rdbmsTableName
+  print rdbmsUserName
+  print rdbmsPassword
+  print targetDir
+  print 'import --connect jdbc:'+rdbmsName+'://'+'127.0.0.1'+':'+str(rdbmsPort)+'/'+rdbmsDatabaseName+' --username '+rdbmsUserName+' --password '+rdbmsPassword+' --query \'SELECT * FROM '+rdbmsTableName+' as a WHERE $CONDITIONS\' --target-dir '+targetDir+' --verbose --split-by a.empid'
+
+  task = make_notebook(
+      name=_('Indexer job for %(rdbmsDatabaseName)s.%(rdbmsDatabaseName)s to %(path)s') % {
+          'rdbmsDatabaseName': source['rdbmsDatabaseName'],
+          'rdbmsDatabaseName': source['rdbmsDatabaseName'],
+          'path': destination['name']
+        },
+      editor_type='sqoop1',
+      statement='import --connect jdbc:mysql://172.31.114.131:3306/hue --username hue --password 12345678 --query SELECT * FROM employee WHERE $CONDITIONS --target-dir hdfs://nightly512-unsecure-1.gce.cloudera.com:8020/user/admin/test77 -m 1',
+      files = [{"path": "/user/admin/mysql-connector-java.jar", "type": "jar"}],
+      status='ready',
+      on_success_url='/filebrowser/view/%s(name)s' % destination,
+      last_executed=start_time,
+      is_task=True
+  )
+
+  return task.execute(request, batch=True)
