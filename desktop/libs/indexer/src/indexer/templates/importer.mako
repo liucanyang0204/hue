@@ -383,12 +383,14 @@ ${ assist.assistPanel() }
             </label>
           </div>
           <div class="control-group" data-bind="visible: createWizard.source.inputFormat() == 'rdbms'">
-            <div><label class="radio inline-block">
-              <input type="radio" name='createWizard.source.dbMode' value='customRdbms' data-bind="checked:'dbModeFunc'" /> ${_('Custom Database')}
-            </label></div>
-            <div><label class="radio inline-block">
-              <input type="radio" name='createWizard.source.dbMode' value='configRdbms' data-bind="checked:'dbModeFunc'" /> ${_('Configured Database')}
-            </label></div>
+            <label for="dbMode" class="control-label"><div>${ _('Database') }</div>
+              <label class="radio inline-block">
+                <input type="radio" name="dbMode" value="customRdbms" data-bind="checked: createWizard.source.dbMode" /> ${_('Custom')}
+              </label>
+              <label class="radio inline-block">
+                <input type="radio" name="dbMode" value="configRdbms" data-bind="checked: createWizard.source.dbMode" /> ${_('Configured')}
+              </label>
+            </label>
           </div>
 
           <div class="control-group" data-bind="visible: createWizard.prefill.target_type() == 'database'">
@@ -1226,13 +1228,12 @@ ${ assist.assistPanel() }
           {'value': 'mysql', 'name': 'Mysql'},
           {'value': 'oracle', 'name': 'Oracle'},
           {'value': 'postgresql', 'name': 'PostgreSQL'},
-          {'value': 'db2', 'name': 'DB2},
+          {'value': 'db2', 'name': 'DB2'}
       ]);
       self.rdbmsTypes = ko.pureComputed(function() {
         return self.rdbmsTypesAll();
       });
-      self.dbMode = ko.observable(true);
-      self.dbModeFunc = ko.observable("dbConfig");
+      self.dbMode = ko.observable('');
       self.rdbmsDatabaseName = ko.observable('');
       self.rdbmsDatabaseNamesAll = ko.observableArray([
           //not sure how to populate the list using the function call get_databases from rdbms_indexer.py.
@@ -1296,7 +1297,7 @@ ${ assist.assistPanel() }
         } else if (self.inputFormat() == 'manual') {
           return true;
         }  else if (self.inputFormat() == 'rdbms') {
-          return self.rdbmsName().length > 0 && self.rdbmsTable().length > 0;
+          return self.rdbmsDatabaseName().length > 0 && self.rdbmsTableName().length > 0;
         }
       });
 
